@@ -1,0 +1,540 @@
+{
+  "name": "09 - Recetas Repetitivas",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n141",
+      "name": "Entrada desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "RECETAS REPETITIVAS\n\nPara medicacion cronica ya conocida. Si no hay antecedente,\npide la foto de la ultima caja/receta (la procesa el Flujo 06,\nque puede alimentar medicamentos_cronicos). Todo pedido pasa\npor aprobacion del medico antes de avisarle al paciente.",
+        "height": 200,
+        "width": 380
+      },
+      "id": "n142",
+      "name": "Nota 11",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Rama de abajo: cuando el NUMERO DEL STAFF (STAFF_WHATSAPP_NUMBER)\nresponde 'APROBAR <id_pedido>', el Router deberia reconocer ese\nmensaje especial y llamar a este mismo Flujo con intent_staff='aprobar_receta'\n(agregar esa regla en el Code 'Parsear clasificacion IA' del Flujo 00: si\ntelefono == STAFF_WHATSAPP_NUMBER y el texto empieza con 'APROBAR', setear\nintent='aprobar_receta' sin pasar por el clasificador de Claude).",
+        "height": 220,
+        "width": 420
+      },
+      "id": "n143",
+      "name": "Nota 12",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/medicamentos_cronicos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "paciente_id",
+              "value": "=eq.{{$json.paciente.id}}"
+            },
+            {
+              "name": "activo",
+              "value": "eq.true"
+            }
+          ]
+        }
+      },
+      "id": "n144",
+      "name": "Buscar medicacion cronica (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $('Entrada desde Router').first().json;\nconst rows = $input.first().json;\nconst medicamento = Array.isArray(rows) && rows.length ? rows[0] : null;\nreturn [{ json: { ...ctx, medicamento, hay_antecedente: !!medicamento } }];\n"
+      },
+      "id": "n145",
+      "name": "Hay antecedente?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.hay_antecedente}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n146",
+      "name": "Tiene antecedente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'No tengo registrada tu medicación habitual todavía. ¿Me mandás una foto de la caja o de la última receta para cargarla?' }) }}"
+      },
+      "id": "n147",
+      "name": "Pedir foto de la ultima caja/receta (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        -140
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pedidos_receta",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ paciente_id: $json.paciente.id, medicamento_cronico_id: $json.medicamento.id, estado: 'pendiente' }]) }}"
+      },
+      "id": "n148",
+      "name": "Insertar pedido_receta (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$env.STAFF_WHATSAPP_NUMBER}}, text: ={{ `💊 Pedido de renovación\\nPaciente: ${$('Hay antecedente?').first().json.paciente.nombre_completo}\\nMedicamento: ${$('Hay antecedente?').first().json.medicamento.droga} ${$('Hay antecedente?').first().json.medicamento.mg || ''}\\n\\nPara aprobar respondé: APROBAR ${$json[0]?.id || $json.id}` }} }) }}"
+      },
+      "id": "n149",
+      "name": "Notificar al medico para aprobar (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        20
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$('Hay antecedente?').first().json.telefono}}, text: 'Le mandé tu pedido de renovación al médico. Apenas lo apruebe te aviso para que la retires.' }) }}"
+      },
+      "id": "n150",
+      "name": "Confirmar pedido enviado (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        100
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n151",
+      "name": "Entrada: aprobacion del medico",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first().json;\nconst match = (item.contenido || '').match(/APROBAR\\s+([a-f0-9-]+)/i);\nreturn [{ json: { ...item, pedido_id: match ? match[1] : null } }];\n"
+      },
+      "id": "n152",
+      "name": "Parsear comando de aprobacion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pedidos_receta",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.pedido_id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ estado: 'aprobada', resuelto_at: new Date().toISOString() }) }}"
+      },
+      "id": "n153",
+      "name": "Marcar pedido_receta aprobado (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pedidos_receta",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json[0]?.id || $json.id}}"
+            },
+            {
+              "name": "select",
+              "value": "*,pacientes(telefono)"
+            }
+          ]
+        }
+      },
+      "id": "n154",
+      "name": "Buscar pedido con paciente (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json[0]?.pacientes?.telefono || $json.pacientes?.telefono}}, text: 'Tu receta ya fue aprobada, podés pasar a retirarla por el consultorio (o te la mandamos digital, avisanos qué preferís).' }) }}"
+      },
+      "id": "n155",
+      "name": "Avisar al paciente que puede retirar (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        620
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    }
+  ],
+  "connections": {
+    "Entrada desde Router": {
+      "main": [
+        [
+          {
+            "node": "Buscar medicacion cronica (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar medicacion cronica (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Hay antecedente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay antecedente?": {
+      "main": [
+        [
+          {
+            "node": "Tiene antecedente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tiene antecedente?": {
+      "main": [
+        [
+          {
+            "node": "Insertar pedido_receta (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir foto de la ultima caja/receta (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar pedido_receta (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Notificar al medico para aprobar (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notificar al medico para aprobar (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Confirmar pedido enviado (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrada: aprobacion del medico": {
+      "main": [
+        [
+          {
+            "node": "Parsear comando de aprobacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear comando de aprobacion": {
+      "main": [
+        [
+          {
+            "node": "Marcar pedido_receta aprobado (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar pedido_receta aprobado (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Buscar pedido con paciente (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar pedido con paciente (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Avisar al paciente que puede retirar (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

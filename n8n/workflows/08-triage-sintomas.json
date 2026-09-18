@@ -1,0 +1,260 @@
+{
+  "name": "08 - Triage de Sintomas",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n133",
+      "name": "Entrada desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "TRIAGE DE SINTOMAS\n\nNO diagnostica: solo detecta señales de alarma basicas antes de\nofrecer un turno de rutina. Ante duda, siempre deriva a guardia\n(nunca minimiza un sintoma). No reemplaza criterio medico.",
+        "height": 160,
+        "width": 380
+      },
+      "id": "n134",
+      "name": "Nota 10",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Sos un triage conversacional MUY conservador para la secretaria de un consultorio de PAMI (NO sos medico, no diagnosticas). Tu unico trabajo es detectar señales de alarma (dolor de pecho, falta de aire, sangrado importante, perdida de conciencia, fiebre muy alta sostenida, etc.). Respondes EXCLUSIVAMENTE JSON: {\"urgencia\": \"alta|media|baja\", \"motivo\": string}. Ante cualquier duda razonable, elegis urgencia alta.', messages: [ { role: 'user', content: 'Sintoma/consulta del paciente: ' + $json.contenido } ] }) }}"
+      },
+      "id": "n135",
+      "name": "Evaluar urgencia (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $('Entrada desde Router').first().json;\nconst resp = $input.first().json;\nlet datos = { urgencia: 'media', motivo: '' };\ntry {\n  const text = resp.content?.[0]?.text || '{}';\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  datos = { ...datos, ...JSON.parse(match ? match[0] : text) };\n} catch (e) {}\nreturn [{ json: { ...ctx, ...datos, motivo_escalamiento: 'urgencia_triage' } }];\n"
+      },
+      "id": "n136",
+      "name": "Parsear triage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.urgencia}}",
+              "rightValue": "alta",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n137",
+      "name": "Urgencia alta?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'Por lo que me contás, es importante que lo veas ahora: andá a la guardia más cercana o llamá al 107 (SAME). No esperes un turno para esto.' }) }}"
+      },
+      "id": "n138",
+      "name": "Indicar guardia/107 (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        -100
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "07 - Escalamiento a Humano"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n139",
+      "name": "Ejecutar Flujo 07 (Escalamiento urgente)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1220,
+        -100
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '07 - Escalamiento a Humano' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "02 - Gestion de Turnos"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n140",
+      "name": "Ejecutar Flujo 02 (turno segun triage)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        980,
+        100
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '02 - Gestion de Turnos' desde el dropdown de Workflow."
+    }
+  ],
+  "connections": {
+    "Entrada desde Router": {
+      "main": [
+        [
+          {
+            "node": "Evaluar urgencia (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluar urgencia (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parsear triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear triage": {
+      "main": [
+        [
+          {
+            "node": "Urgencia alta?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Urgencia alta?": {
+      "main": [
+        [
+          {
+            "node": "Indicar guardia/107 (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 02 (turno segun triage)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Indicar guardia/107 (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar Flujo 07 (Escalamiento urgente)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

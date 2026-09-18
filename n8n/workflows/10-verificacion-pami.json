@@ -1,0 +1,327 @@
+{
+  "name": "10 - Verificacion Cobertura PAMI",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n156",
+      "name": "Entrada desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "VERIFICACION DE COBERTURA PAMI\n\nConsulta la tabla nomenclador_pami (cargada a mano por el\nconsultorio) para saber si una practica requiere autorizacion\nprevia o coseguro, y le explica al paciente el tramite.",
+        "height": 160,
+        "width": 380
+      },
+      "id": "n157",
+      "name": "Nota 13",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/nomenclador_pami",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "practica",
+              "value": "=ilike.*{{ encodeURIComponent($json.contenido) }}*"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        }
+      },
+      "id": "n158",
+      "name": "Buscar practica en nomenclador (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $('Entrada desde Router').first().json;\nconst rows = $input.first().json;\nconst practica = Array.isArray(rows) && rows.length ? rows[0] : null;\nreturn [{ json: { ...ctx, practica, encontrada: !!practica } }];\n"
+      },
+      "id": "n159",
+      "name": "Extraer practica",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.encontrada}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n160",
+      "name": "Encontrada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'No tengo ese dato cargado todavía. Te lo confirmamos en el consultorio antes de tu turno, tranquilo/a.' }) }}"
+      },
+      "id": "n161",
+      "name": "Responder que se confirma en el consultorio (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        -100
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.practica.requiere_autorizacion || $json.practica.requiere_coseguro}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n162",
+      "name": "Requiere autorizacion o coseguro?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        980,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: ={{ 'Esa práctica requiere trámite previo con PAMI. ' + ($json.practica.instrucciones || 'Te recomendamos consultar en tu agencia de PAMI antes del turno.') }} }) }}"
+      },
+      "id": "n163",
+      "name": "Explicar tramite necesario (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        40
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'Esa práctica la cubre PAMI directamente, no necesitás autorización previa.' }) }}"
+      },
+      "id": "n164",
+      "name": "Confirmar cobertura directa (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        160
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    }
+  ],
+  "connections": {
+    "Entrada desde Router": {
+      "main": [
+        [
+          {
+            "node": "Buscar practica en nomenclador (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar practica en nomenclador (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Extraer practica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer practica": {
+      "main": [
+        [
+          {
+            "node": "Encontrada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Encontrada?": {
+      "main": [
+        [
+          {
+            "node": "Requiere autorizacion o coseguro?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder que se confirma en el consultorio (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requiere autorizacion o coseguro?": {
+      "main": [
+        [
+          {
+            "node": "Explicar tramite necesario (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirmar cobertura directa (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

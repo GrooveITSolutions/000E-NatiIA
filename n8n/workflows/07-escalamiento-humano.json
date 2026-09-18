@@ -1,0 +1,359 @@
+{
+  "name": "07 - Escalamiento a Humano",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n124",
+      "name": "Entrada desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "ESCALAMIENTO A HUMANO\n\nCorta el piloto automatico: resume la conversacion, notifica a la\nsecretaria/medico por WhatsApp y marca al paciente como\n'en_manos_de_humano' para que el Router deje de responder\nautomaticamente hasta que alguien lo reactive.",
+        "height": 180,
+        "width": 380
+      },
+      "id": "n125",
+      "name": "Nota 9",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/conversaciones",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "paciente_id",
+              "value": "=eq.{{$json.paciente ? $json.paciente.id : ''}}"
+            },
+            {
+              "name": "order",
+              "value": "created_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            },
+            {
+              "name": "select",
+              "value": "direccion,contenido,created_at"
+            }
+          ]
+        }
+      },
+      "id": "n126",
+      "name": "Traer ultimos mensajes (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Resumis en 2-3 lineas, en español y para una secretaria humana, de que trata una conversacion de WhatsApp con un paciente de un consultorio medico. Se directo y concreto.', messages: [ { role: 'user', content: 'Motivo del escalamiento: ' + ($json.motivo_escalamiento || $json.intent || 'consulta del paciente') + '\\nUltimos mensajes (mas reciente primero): ' + JSON.stringify($input.first().json) } ] }) }}"
+      },
+      "id": "n127",
+      "name": "Resumir conversacion (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $('Entrada desde Router').first().json;\nconst resp = $input.first().json;\nconst resumen = resp.content?.[0]?.text?.trim() || 'Sin resumen disponible.';\nreturn [{ json: { ...ctx, resumen } }];\n"
+      },
+      "id": "n128",
+      "name": "Preparar resumen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/escalamientos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ paciente_id: $json.paciente ? $json.paciente.id : null, motivo: $json.motivo_escalamiento || $json.intent || 'consulta_del_paciente', resumen: $json.resumen }]) }}"
+      },
+      "id": "n129",
+      "name": "Insertar escalamiento (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pacientes",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.paciente ? $json.paciente.id : ''}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ en_manos_de_humano: true }) }}"
+      },
+      "id": "n130",
+      "name": "Marcar paciente en_manos_de_humano (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$env.STAFF_WHATSAPP_NUMBER}}, text: ={{ `📋 Paciente: ${$('Preparar resumen').first().json.paciente?.nombre_completo || $('Preparar resumen').first().json.telefono}\\nTel: ${$('Preparar resumen').first().json.telefono}\\nResumen: ${$('Preparar resumen').first().json.resumen}\\n\\nCuando lo resuelvas, marcá en_manos_de_humano=false en la ficha del paciente para reactivar el bot.` }} }) }}"
+      },
+      "id": "n131",
+      "name": "Notificar a secretaria/medico (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        -100
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$('Preparar resumen').first().json.telefono}}, text: 'Te paso con alguien del consultorio, en breve te responden por acá 🙂' }) }}"
+      },
+      "id": "n132",
+      "name": "Avisar al paciente que lo derivamos (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        100
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    }
+  ],
+  "connections": {
+    "Entrada desde Router": {
+      "main": [
+        [
+          {
+            "node": "Traer ultimos mensajes (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traer ultimos mensajes (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Resumir conversacion (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumir conversacion (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Preparar resumen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar resumen": {
+      "main": [
+        [
+          {
+            "node": "Insertar escalamiento (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar escalamiento (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Marcar paciente en_manos_de_humano (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar paciente en_manos_de_humano (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Notificar a secretaria/medico (WhatsApp)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar al paciente que lo derivamos (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

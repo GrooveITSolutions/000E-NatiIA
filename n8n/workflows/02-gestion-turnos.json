@@ -1,0 +1,824 @@
+{
+  "name": "02 - Gestion de Turnos",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n041",
+      "name": "Entrada desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "GESTION DE TURNOS\n\nManeja tanto el pedido inicial de turno (ofrece opciones)\ncomo la respuesta del paciente eligiendo una opcion\n(usa pacientes.estado_conversacion para saber en que paso esta).\nTambien se llama desde el Flujo 03 cuando alguien acepta\nun turno liberado de la lista de espera.",
+        "height": 200,
+        "width": 380
+      },
+      "id": "n042",
+      "name": "Nota 4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.onboarding_completo}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n043",
+      "name": "Paciente registrado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'Antes de sacar el turno necesito registrarte. ¿Me mandás una foto de tu DNI y de tu credencial de PAMI?' }) }}"
+      },
+      "id": "n044",
+      "name": "Pedir registro primero",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        -160
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ ['confirmacion_turno','oferta_lista_espera'].includes($json.estado_conversacion?.esperando) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n045",
+      "name": "Hay confirmacion pendiente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        500,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Interpretas pedidos de turno para un consultorio medico de PAMI. Devolves EXCLUSIVAMENTE JSON: {\"tipo_consulta\": string, \"duracion_minutos\": number, \"profesional\": string, \"preferencia\": string|null}. duracion_minutos tipico: consulta_general=20, control=15, practica=30. profesional por defecto \"default\" si no se especifica.', messages: [ { role: 'user', content: 'Mensaje del paciente: ' + $json.contenido } ] }) }}"
+      },
+      "id": "n046",
+      "name": "Clasificar motivo de consulta (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $('Hay confirmacion pendiente?').first().json;\nconst resp = $input.first().json;\nlet datos = { tipo_consulta: 'consulta_general', duracion_minutos: 20, profesional: 'default', preferencia: null };\ntry {\n  const text = resp.content?.[0]?.text || '{}';\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  datos = { ...datos, ...JSON.parse(match ? match[0] : text) };\n} catch (e) {}\nreturn [{ json: { ...item, ...datos } }];\n"
+      },
+      "id": "n047",
+      "name": "Parsear motivo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_CALENDAR_ID}}",
+          "mode": "id"
+        },
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 100,
+        "options": {
+          "timeMin": "={{ new Date().toISOString() }}",
+          "timeMax": "={{ new Date(Date.now() + 14*24*3600*1000).toISOString() }}"
+        }
+      },
+      "id": "n048",
+      "name": "Listar eventos del calendario",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1220,
+        260
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Calendar - Consultorio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $('Parsear motivo').first().json;\nconst eventos = $input.all().map(i => i.json);\nconst duracion = ctx.duracion_minutos || 20;\n\nconst busy = eventos\n  .filter(e => e.start && e.end)\n  .map(e => ({\n    start: new Date(e.start.dateTime || e.start.date),\n    end: new Date(e.end.dateTime || e.end.date),\n  }));\n\nfunction overlaps(s, e) {\n  return busy.some(b => s < b.end && e > b.start);\n}\n\nconst opciones = [];\nconst now = new Date();\nfor (let d = 1; d <= 14 && opciones.length < 3; d++) {\n  const day = new Date(now);\n  day.setDate(day.getDate() + d);\n  const weekday = day.getDay(); // 0=domingo\n  if (weekday === 0 || weekday === 6) continue; // solo Lun-Vie\n\n  const bloques = [[9, 13], [15, 19]];\n  for (const [hIni, hFin] of bloques) {\n    for (let h = hIni * 60; h + duracion <= hFin * 60 && opciones.length < 3; h += duracion) {\n      const start = new Date(day);\n      start.setHours(0, 0, 0, 0);\n      start.setMinutes(h);\n      const end = new Date(start.getTime() + duracion * 60000);\n      if (start < now) continue;\n      if (!overlaps(start, end)) {\n        opciones.push({ start: start.toISOString(), end: end.toISOString() });\n      }\n    }\n  }\n}\n\nreturn [{ json: { ...ctx, opciones } }];\n"
+      },
+      "id": "n049",
+      "name": "Calcular huecos libres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $input.first().json;\nconst dias = ['domingo','lunes','martes','miercoles','jueves','viernes','sabado'];\nconst meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];\n\nfunction fmt(iso) {\n  const d = new Date(iso);\n  return `${dias[d.getDay()]} ${d.getDate()} de ${meses[d.getMonth()]} a las ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;\n}\n\nlet texto;\nif (!ctx.opciones.length) {\n  texto = 'No encontré turnos disponibles en los próximos 14 días 😕. Te aviso apenas se libere uno, o podés llamar al consultorio.';\n} else {\n  const lineas = ctx.opciones.map((o, i) => `${i + 1}. ${fmt(o.start)}`);\n  texto = `Tengo estos turnos disponibles:\\n\\n${lineas.join('\\n')}\\n\\nRespondé con el número de la opción que preferís.`;\n}\n\nreturn [{ json: { ...ctx, mensaje_opciones: texto } }];\n"
+      },
+      "id": "n050",
+      "name": "Redactar opciones en lenguaje natural",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: ={{$json.mensaje_opciones}} }) }}"
+      },
+      "id": "n051",
+      "name": "Enviar opciones de turno (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        180
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pacientes",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.paciente.id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ estado_conversacion: { esperando: 'confirmacion_turno', opciones: $json.opciones, tipo_consulta: $json.tipo_consulta, profesional: $json.profesional } }) }}"
+      },
+      "id": "n052",
+      "name": "Guardar estado_conversacion (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $('Hay confirmacion pendiente?').first().json;\nconst estado = item.estado_conversacion || {};\nconst opciones = estado.opciones || [];\nconst texto = (item.contenido || '').trim();\nconst n = parseInt(texto.match(/\\d+/)?.[0], 10);\nconst seleccion = (n && opciones[n - 1]) ? opciones[n - 1] : null;\n\nreturn [{\n  json: {\n    ...item,\n    seleccion,\n    seleccion_valida: !!seleccion,\n    es_oferta_lista_espera: estado.esperando === 'oferta_lista_espera',\n    lista_espera_id: estado.lista_espera_id || null,\n    tipo_consulta: estado.tipo_consulta || 'consulta_general',\n    profesional: estado.profesional || 'default',\n  }\n}];\n"
+      },
+      "id": "n053",
+      "name": "Interpretar seleccion del paciente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.seleccion_valida}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n054",
+      "name": "Seleccion valida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        740,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'No entendí cuál elegís. Respondé solo con el número de la opción (por ejemplo: 1).' }) }}"
+      },
+      "id": "n055",
+      "name": "Pedir que elija de nuevo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        560
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_CALENDAR_ID}}",
+          "mode": "id"
+        },
+        "operation": "create",
+        "start": "={{$json.seleccion.start}}",
+        "end": "={{$json.seleccion.end}}",
+        "additionalFields": {
+          "summary": "={{ 'Consulta - ' + ($json.paciente?.nombre_completo || $json.telefono) }}",
+          "description": "={{ 'Tipo: ' + $json.tipo_consulta + ' | Tel: ' + $json.telefono }}"
+        }
+      },
+      "id": "n056",
+      "name": "Crear evento en Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        980,
+        400
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Calendar - Consultorio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/turnos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ paciente_id: $('Interpretar seleccion del paciente').first().json.paciente.id, google_event_id: $json.id, profesional: $('Interpretar seleccion del paciente').first().json.profesional, tipo_consulta: $('Interpretar seleccion del paciente').first().json.tipo_consulta, fecha_hora: $('Interpretar seleccion del paciente').first().json.seleccion.start, estado: 'confirmado' }]) }}"
+      },
+      "id": "n057",
+      "name": "Insertar turno (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pacientes",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$('Interpretar seleccion del paciente').first().json.paciente.id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ visitas_totales: ($('Interpretar seleccion del paciente').first().json.paciente.visitas_totales || 0) + 1, estado_conversacion: {} }) }}"
+      },
+      "id": "n058",
+      "name": "Incrementar visitas (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$('Interpretar seleccion del paciente').first().json.es_oferta_lista_espera}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n059",
+      "name": "Era oferta de lista de espera?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/lista_espera",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$('Interpretar seleccion del paciente').first().json.lista_espera_id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ estado: 'tomado' }) }}"
+      },
+      "id": "n060",
+      "name": "Marcar lista_espera tomado (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$('Interpretar seleccion del paciente').first().json.telefono}}, text: ={{ 'Listo, tu turno quedó confirmado para el ' + new Date($('Interpretar seleccion del paciente').first().json.seleccion.start).toLocaleString('es-AR') + '. Te voy a mandar un recordatorio antes 🙂' }} }) }}"
+      },
+      "id": "n061",
+      "name": "Confirmar turno al paciente (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2180,
+        400
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    }
+  ],
+  "connections": {
+    "Entrada desde Router": {
+      "main": [
+        [
+          {
+            "node": "Paciente registrado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paciente registrado?": {
+      "main": [
+        [
+          {
+            "node": "Hay confirmacion pendiente?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir registro primero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay confirmacion pendiente?": {
+      "main": [
+        [
+          {
+            "node": "Clasificar motivo de consulta (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Interpretar seleccion del paciente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar motivo de consulta (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parsear motivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear motivo": {
+      "main": [
+        [
+          {
+            "node": "Listar eventos del calendario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Listar eventos del calendario": {
+      "main": [
+        [
+          {
+            "node": "Calcular huecos libres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular huecos libres": {
+      "main": [
+        [
+          {
+            "node": "Redactar opciones en lenguaje natural",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redactar opciones en lenguaje natural": {
+      "main": [
+        [
+          {
+            "node": "Enviar opciones de turno (WhatsApp)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Guardar estado_conversacion (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar seleccion del paciente": {
+      "main": [
+        [
+          {
+            "node": "Seleccion valida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seleccion valida?": {
+      "main": [
+        [
+          {
+            "node": "Crear evento en Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir que elija de nuevo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear evento en Calendar": {
+      "main": [
+        [
+          {
+            "node": "Insertar turno (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar turno (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Incrementar visitas (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Incrementar visitas (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Era oferta de lista de espera?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Era oferta de lista de espera?": {
+      "main": [
+        [
+          {
+            "node": "Marcar lista_espera tomado (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirmar turno al paciente (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar lista_espera tomado (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Confirmar turno al paciente (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

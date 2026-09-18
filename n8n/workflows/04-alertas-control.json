@@ -1,0 +1,261 @@
+{
+  "name": "04 - Alertas de Control",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "n090",
+      "name": "Diario 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "ALERTAS DE CONTROL PREVENTIVO\n\nCorre una vez por dia. Revisa la tabla controles_cronicos\n(ej: control cardiologico cada 6 meses) y avisa por WhatsApp\ncuando a un paciente le toca. Estos registros se cargan\nmanualmente o desde el Flujo 06 cuando se detecta un\ndiagnostico cronico en una orden/derivacion.",
+        "height": 200,
+        "width": 380
+      },
+      "id": "n091",
+      "name": "Nota 6",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/controles_cronicos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "alerta_enviada",
+              "value": "eq.false"
+            },
+            {
+              "name": "select",
+              "value": "*,pacientes(telefono,nombre_completo)"
+            }
+          ]
+        }
+      },
+      "id": "n092",
+      "name": "Buscar controles (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst rows = $input.first().json;\nconst hoy = new Date();\nconst vencidos = (Array.isArray(rows) ? rows : []).filter(c => {\n  if (!c.ultima_fecha) return true;\n  const venc = new Date(c.ultima_fecha);\n  venc.setMonth(venc.getMonth() + (c.frecuencia_meses || 6));\n  return venc <= hoy;\n});\nreturn vencidos.map(c => ({ json: c }));\n"
+      },
+      "id": "n093",
+      "name": "Filtrar controles vencidos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "n094",
+      "name": "Loop controles vencidos",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.pacientes.telefono}}, text: ={{ `Hola ${$json.pacientes.nombre_completo || ''}! Te recordamos que te corresponde un control de \"${$json.tipo_control}\". ¿Querés que te ayude a sacar un turno?` }} }) }}"
+      },
+      "id": "n095",
+      "name": "Enviar sugerencia de control (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        0
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/controles_cronicos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ alerta_enviada: true }) }}"
+      },
+      "id": "n096",
+      "name": "Marcar alerta_enviada (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Diario 8am": {
+      "main": [
+        [
+          {
+            "node": "Buscar controles (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar controles (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Filtrar controles vencidos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar controles vencidos": {
+      "main": [
+        [
+          {
+            "node": "Loop controles vencidos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop controles vencidos": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Enviar sugerencia de control (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar sugerencia de control (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Marcar alerta_enviada (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar alerta_enviada (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Loop controles vencidos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

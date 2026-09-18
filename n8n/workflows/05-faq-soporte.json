@@ -1,0 +1,306 @@
+{
+  "name": "05 - FAQ Soporte 24-7",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n097",
+      "name": "Entrada desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "FAQ / SOPORTE 24-7\n\nBusca en base_conocimiento (full-text search de Postgres) los\n2-3 registros mas relevantes y le pide a Claude que responda\nSOLO con esa info. Si no alcanza, escala a un humano en vez\nde inventar (importante en un contexto medico).",
+        "height": 180,
+        "width": 380
+      },
+      "id": "n098",
+      "name": "Nota 7",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/base_conocimiento",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "search",
+              "value": "=fts(spanish).{{ encodeURIComponent($json.contenido.split(' ').join(' & ')) }}"
+            },
+            {
+              "name": "select",
+              "value": "pregunta,respuesta"
+            },
+            {
+              "name": "limit",
+              "value": "3"
+            }
+          ]
+        }
+      },
+      "id": "n099",
+      "name": "Buscar en base de conocimiento (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $('Entrada desde Router').first().json;\nconst rows = $input.first().json;\nconst contexto = (Array.isArray(rows) ? rows : []).map(r => `P: ${r.pregunta}\\nR: ${r.respuesta}`).join('\\n\\n');\nreturn [{ json: { ...ctx, contexto_encontrado: contexto, hay_contexto: !!contexto } }];\n"
+      },
+      "id": "n100",
+      "name": "Preparar contexto recuperado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Sos la secretaria virtual de un consultorio medico de PAMI. Respondes preguntas frecuentes (horarios, preparacion de estudios, ubicacion, cartilla) usando UNICAMENTE la informacion de contexto que te paso. Si el contexto no alcanza para responder con seguridad, respondes EXACTAMENTE: NO_SE. Nunca inventes datos medicos ni administrativos.', messages: [ { role: 'user', content: 'Contexto disponible:\\n' + ($json.contexto_encontrado || '(sin resultados)') + '\\n\\nPregunta del paciente: ' + $json.contenido } ] }) }}"
+      },
+      "id": "n101",
+      "name": "Responder con Claude (RAG)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $('Preparar contexto recuperado').first().json;\nconst resp = $input.first().json;\nconst texto = resp.content?.[0]?.text?.trim() || '';\nreturn [{ json: { ...ctx, respuesta_ia: texto, no_supo: texto === 'NO_SE' || !ctx.hay_contexto } }];\n"
+      },
+      "id": "n102",
+      "name": "Chequear si Claude no supo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.no_supo}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n103",
+      "name": "Claude no supo responder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "07 - Escalamiento a Humano"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n104",
+      "name": "Ejecutar Flujo 07 (Escalamiento)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1460,
+        -100
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '07 - Escalamiento a Humano' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: ={{$json.respuesta_ia}} }) }}"
+      },
+      "id": "n105",
+      "name": "Enviar respuesta (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        100
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    }
+  ],
+  "connections": {
+    "Entrada desde Router": {
+      "main": [
+        [
+          {
+            "node": "Buscar en base de conocimiento (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar en base de conocimiento (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Preparar contexto recuperado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar contexto recuperado": {
+      "main": [
+        [
+          {
+            "node": "Responder con Claude (RAG)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder con Claude (RAG)": {
+      "main": [
+        [
+          {
+            "node": "Chequear si Claude no supo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chequear si Claude no supo": {
+      "main": [
+        [
+          {
+            "node": "Claude no supo responder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude no supo responder?": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar Flujo 07 (Escalamiento)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar respuesta (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,1157 @@
+{
+  "name": "00 - Router Maestro",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-in",
+        "responseMode": "onReceived",
+        "responseData": "={{ {status:\"ok\"} }}",
+        "options": {}
+      },
+      "id": "n001",
+      "name": "Webhook WhatsApp Entrante",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "ROUTER MAESTRO\n\nPunto de entrada unico de todo lo que llega por WhatsApp (Evolution API).\nClasifica el mensaje y dispara el sub-flujo correspondiente via Execute Workflow.\n\nConfigurar en Evolution API el webhook apuntando a esta URL.",
+        "height": 180,
+        "width": 380
+      },
+      "id": "n002",
+      "name": "Nota 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.event}}",
+              "rightValue": "messages.upsert",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n003",
+      "name": "Filtrar eventos validos",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst body = $input.first().json;\nconst data = body.data || {};\nconst key = data.key || {};\nconst msg = data.message || {};\n\nconst telefono = (key.remoteJid || '').replace('@s.whatsapp.net', '').replace('@g.us', '');\n\nlet tipo = 'texto';\nlet contenido = '';\nlet media_url = null;\n\nif (msg.conversation) {\n  tipo = 'texto';\n  contenido = msg.conversation;\n} else if (msg.extendedTextMessage) {\n  tipo = 'texto';\n  contenido = msg.extendedTextMessage.text;\n} else if (msg.imageMessage) {\n  tipo = 'imagen';\n  contenido = msg.imageMessage.caption || '';\n  media_url = data.mediaUrl || msg.imageMessage.url || null;\n} else if (msg.audioMessage) {\n  tipo = 'audio';\n  media_url = data.mediaUrl || msg.audioMessage.url || null;\n} else if (msg.locationMessage) {\n  tipo = 'ubicacion';\n  contenido = JSON.stringify({lat: msg.locationMessage.degreesLatitude, lng: msg.locationMessage.degreesLongitude});\n} else if (msg.buttonsResponseMessage) {\n  tipo = 'texto';\n  contenido = msg.buttonsResponseMessage.selectedButtonId || msg.buttonsResponseMessage.selectedDisplayText;\n} else if (msg.listResponseMessage) {\n  tipo = 'texto';\n  contenido = msg.listResponseMessage.singleSelectReply?.selectedRowId || msg.listResponseMessage.title;\n}\n\nreturn [{\n  json: {\n    telefono,\n    tipo,\n    contenido,\n    media_url,\n    timestamp: data.messageTimestamp || Math.floor(Date.now() / 1000),\n  }\n}];\n"
+      },
+      "id": "n004",
+      "name": "Normalizar mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pacientes",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "telefono",
+              "value": "=eq.{{$json.telefono}}"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        }
+      },
+      "id": "n005",
+      "name": "Buscar paciente (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst normalizado = $('Normalizar mensaje').first().json;\nconst rows = $input.first().json;\nconst paciente = Array.isArray(rows) && rows.length ? rows[0] : null;\n\nreturn [{\n  json: {\n    ...normalizado,\n    paciente,\n    es_nuevo: !paciente,\n    onboarding_completo: paciente ? !!paciente.onboarding_completo : false,\n    en_manos_de_humano: paciente ? !!paciente.en_manos_de_humano : false,\n    estado_conversacion: paciente ? (paciente.estado_conversacion || {}) : {},\n  }\n}];\n"
+      },
+      "id": "n006",
+      "name": "Armar contexto paciente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.en_manos_de_humano}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n007",
+      "name": "Esta en manos de un humano?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Si la conversacion esta marcada como 'en_manos_de_humano' (Flujo 07),\nel bot no contesta automatico. Solo se registra el mensaje para que\nla secretaria/medico lo vea. Se libera manualmente marcando\nen_manos_de_humano=false en Supabase (o agregar un comando tipo\n'BOT ON' que el staff mande para reactivarlo).",
+        "height": 200,
+        "width": 320
+      },
+      "id": "n008",
+      "name": "Nota 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1220,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/conversaciones",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ paciente_id: $json.paciente ? $json.paciente.id : null, telefono: $json.telefono, direccion: 'entrante', tipo_mensaje: $json.tipo, contenido: $json.contenido, intent: 'atendido_por_humano', flujo: 'router' }]) }}"
+      },
+      "id": "n009",
+      "name": "Registrar mensaje (humano) (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "imagen",
+                    "leftValue": "={{$json.tipo}}",
+                    "rightValue": "imagen",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "imagen"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "audio",
+                    "leftValue": "={{$json.tipo}}",
+                    "rightValue": "audio",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "audio"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "texto",
+                    "leftValue": "={{$json.tipo}}",
+                    "rightValue": "texto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "texto"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "otro"
+        }
+      },
+      "id": "n010",
+      "name": "Tipo de contenido",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1220,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first().json;\nconst intent = item.onboarding_completo ? 'imagen_documento' : 'imagen_identidad';\nreturn [{ json: { ...item, intent, confidence: 1 } }];\n"
+      },
+      "id": "n011",
+      "name": "Determinar intent de imagen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.STT_API_URL}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.STT_API_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "audio_url",
+              "value": "={{$json.media_url}}"
+            }
+          ]
+        }
+      },
+      "id": "n012",
+      "name": "Transcribir audio (STT)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        160
+      ],
+      "notes": "Claude no transcribe audio. Conectar aqui un proveedor de Speech-to-Text (ej. Whisper de OpenAI o Groq) via STT_API_URL/STT_API_KEY. Ajustar el body/response segun el proveedor elegido."
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first().json;\nconst transcripcion = $json.text || $json.transcript || '';\nreturn [{ json: { ...item, tipo: 'texto', contenido: transcripcion } }];\n"
+      },
+      "id": "n013",
+      "name": "Tratar transcripcion como texto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Sos el clasificador de intenciones de la secretaria virtual de un consultorio medico de PAMI. Devolves EXCLUSIVAMENTE un JSON valido (sin texto adicional, sin markdown) con esta forma: {\"intent\": string, \"confidence\": number, \"entities\": object}. Los valores posibles de intent son: turno_nuevo, cancelar_turno, pregunta_general, pedido_receta, consulta_sintoma, hablar_con_humano, verificar_cobertura, otro.', messages: [ { role: 'user', content: =[ { type: 'text', text: 'Mensaje del paciente: ' + $json.contenido + '\\n\\nEstado de conversacion actual del paciente (por si esta respondiendo algo puntual): ' + JSON.stringify($json.estado_conversacion) } ] } ] }) }}"
+      },
+      "id": "n014",
+      "name": "Clasificar intencion (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $('Tipo de contenido').first().json;\nconst resp = $input.first().json;\nlet intent = 'otro';\nlet confidence = 0;\nlet entities = {};\ntry {\n  const text = resp.content?.[0]?.text || '{}';\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  const parsed = JSON.parse(match ? match[0] : text);\n  intent = parsed.intent || 'otro';\n  confidence = parsed.confidence ?? 0.5;\n  entities = parsed.entities || {};\n} catch (e) {\n  intent = 'otro';\n}\n\n// Si el paciente esta respondiendo a una oferta de turno/lista de espera pendiente, priorizar eso.\nconst estado = item.estado_conversacion || {};\nif (estado.esperando === 'confirmacion_turno' || estado.esperando === 'oferta_lista_espera') {\n  intent = 'turno_nuevo';\n  confidence = 1;\n}\n\nreturn [{ json: { ...item, intent, confidence, entities } }];\n"
+      },
+      "id": "n015",
+      "name": "Parsear clasificacion IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/conversaciones",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ paciente_id: $json.paciente ? $json.paciente.id : null, telefono: $json.telefono, direccion: 'entrante', tipo_mensaje: $json.tipo, contenido: $json.contenido, intent: $json.intent, confidence: $json.confidence, flujo: 'router' }]) }}"
+      },
+      "id": "n016",
+      "name": "Registrar conversacion (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "imagen_identidad",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "imagen_identidad",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "imagen_identidad"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "imagen_documento",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "imagen_documento",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "imagen_documento"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "turno_nuevo",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "turno_nuevo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "turno_nuevo"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cancelar_turno",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "cancelar_turno",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "cancelar_turno"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "pregunta_general",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "pregunta_general",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "pregunta_general"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "pedido_receta",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "pedido_receta",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "pedido_receta"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "consulta_sintoma",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "consulta_sintoma",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "consulta_sintoma"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "hablar_con_humano",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "hablar_con_humano",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "hablar_con_humano"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "verificar_cobertura",
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "verificar_cobertura",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "verificar_cobertura"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "otro"
+        }
+      },
+      "id": "n017",
+      "name": "Enrutar por intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        2180,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "01 - Onboarding OCR Identidad"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n018",
+      "name": "Ejecutar Flujo 01 (OCR Identidad)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        0
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '01 - Onboarding OCR Identidad' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "06 - Analisis de Documentos"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n019",
+      "name": "Ejecutar Flujo 06 (Documentos)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        40
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '06 - Analisis de Documentos' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "02 - Gestion de Turnos"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n020",
+      "name": "Ejecutar Flujo 02 (Turnos)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        80
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '02 - Gestion de Turnos' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "03 - Recordatorios y Lista de Espera"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n021",
+      "name": "Ejecutar Flujo 03 (Cancelacion)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        120
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '03 - Recordatorios y Lista de Espera' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "05 - FAQ Soporte 24-7"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n022",
+      "name": "Ejecutar Flujo 05 (FAQ)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        160
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '05 - FAQ Soporte 24-7' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "09 - Recetas Repetitivas"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n023",
+      "name": "Ejecutar Flujo 09 (Recetas)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        200
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '09 - Recetas Repetitivas' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "08 - Triage de Sintomas"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n024",
+      "name": "Ejecutar Flujo 08 (Triage)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        240
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '08 - Triage de Sintomas' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "07 - Escalamiento a Humano"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n025",
+      "name": "Ejecutar Flujo 07 (Escalamiento)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        280
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '07 - Escalamiento a Humano' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "10 - Verificacion Cobertura PAMI"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n026",
+      "name": "Ejecutar Flujo 10 (Verificacion PAMI)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        320
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '10 - Verificacion Cobertura PAMI' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "07 - Escalamiento a Humano"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n027",
+      "name": "Ejecutar Flujo 07 (Escalamiento por defecto)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        360
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '07 - Escalamiento a Humano' desde el dropdown de Workflow."
+    }
+  ],
+  "connections": {
+    "Enrutar por intent": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar Flujo 01 (OCR Identidad)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 06 (Documentos)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 02 (Turnos)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 03 (Cancelacion)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 05 (FAQ)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 09 (Recetas)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 08 (Triage)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 07 (Escalamiento)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 10 (Verificacion PAMI)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ejecutar Flujo 07 (Escalamiento por defecto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook WhatsApp Entrante": {
+      "main": [
+        [
+          {
+            "node": "Filtrar eventos validos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar eventos validos": {
+      "main": [
+        [
+          {
+            "node": "Normalizar mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar mensaje": {
+      "main": [
+        [
+          {
+            "node": "Buscar paciente (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar paciente (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Armar contexto paciente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar contexto paciente": {
+      "main": [
+        [
+          {
+            "node": "Esta en manos de un humano?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esta en manos de un humano?": {
+      "main": [
+        [
+          {
+            "node": "Registrar mensaje (humano) (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tipo de contenido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tipo de contenido": {
+      "main": [
+        [
+          {
+            "node": "Determinar intent de imagen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transcribir audio (STT)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar intencion (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar intencion (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribir audio (STT)": {
+      "main": [
+        [
+          {
+            "node": "Tratar transcripcion como texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tratar transcripcion como texto": {
+      "main": [
+        [
+          {
+            "node": "Clasificar intencion (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar intencion (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parsear clasificacion IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determinar intent de imagen": {
+      "main": [
+        [
+          {
+            "node": "Registrar conversacion (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear clasificacion IA": {
+      "main": [
+        [
+          {
+            "node": "Registrar conversacion (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar conversacion (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Enrutar por intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

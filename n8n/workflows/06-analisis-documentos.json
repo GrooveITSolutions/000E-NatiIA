@@ -1,0 +1,711 @@
+{
+  "name": "06 - Analisis de Documentos",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n106",
+      "name": "Entrada desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "ANALISIS DE DOCUMENTOS\n\nSe dispara con cualquier foto de un paciente ya registrado que\nno sea DNI/credencial (eso lo maneja el Flujo 01). Clasifica el\ntipo de documento y aplica el prompt de vision especifico segun\ncorresponda (receta manuscrita, caja de medicamento, o un\ndocumento con QR/codigo de barras).",
+        "height": 200,
+        "width": 400
+      },
+      "id": "n107",
+      "name": "Nota 8",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$json.media_url}}",
+        "options": {}
+      },
+      "id": "n108",
+      "name": "Descargar imagen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "notes": "Configurar 'Response Format' = File/Binary tras importar."
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first();\nconst binary = item.binary?.data;\nif (!binary) throw new Error('No se recibio imagen binaria.');\nreturn [{ json: { ...item.json, image_base64: binary.data, mime_type: binary.mimeType || 'image/jpeg' } }];\n"
+      },
+      "id": "n109",
+      "name": "Convertir a base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Clasificas fotos de papeles que envian pacientes a un consultorio medico de PAMI. Respondes EXCLUSIVAMENTE JSON: {\"tipo_documento\": \"orden_laboratorio|derivacion|receta_manuscrita|medicamento|certificado|otro\", \"tiene_codigo\": boolean}.', messages: [ { role: 'user', content: [ { type: 'text', text: 'Clasifica este documento.' }, { type: 'image', source: { type: 'base64', media_type: $json.mime_type, data: $json.image_base64 } } ] } ] }) }}"
+      },
+      "id": "n110",
+      "name": "Clasificar documento (Claude Vision)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst prev = $('Convertir a base64').first().json;\nconst resp = $input.first().json;\nlet datos = { tipo_documento: 'otro', tiene_codigo: false };\ntry {\n  const text = resp.content?.[0]?.text || '{}';\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  datos = { ...datos, ...JSON.parse(match ? match[0] : text) };\n} catch (e) {}\nlet ruta = datos.tipo_documento;\nif (datos.tiene_codigo) ruta = 'con_codigo';\nreturn [{ json: { ...prev, ...datos, ruta } }];\n"
+      },
+      "id": "n111",
+      "name": "Parsear clasificacion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "receta_manuscrita",
+                    "leftValue": "={{$json.ruta}}",
+                    "rightValue": "receta_manuscrita",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "receta_manuscrita"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "medicamento",
+                    "leftValue": "={{$json.ruta}}",
+                    "rightValue": "medicamento",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "medicamento"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "con_codigo",
+                    "leftValue": "={{$json.ruta}}",
+                    "rightValue": "con_codigo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "con_codigo"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "otro"
+        }
+      },
+      "id": "n112",
+      "name": "Tipo de documento",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Digitalizas ordenes/derivaciones medicas manuscritas para un consultorio de PAMI en Argentina. Respondes EXCLUSIVAMENTE JSON: {\"diagnostico\": string|null, \"estudio_solicitado\": string|null, \"medico_derivante\": string|null, \"especialidad_derivada\": string|null}.', messages: [ { role: 'user', content: [ { type: 'text', text: 'Extrae los datos de esta orden/derivacion manuscrita.' }, { type: 'image', source: { type: 'base64', media_type: $json.mime_type, data: $json.image_base64 } } ] } ] }) }}"
+      },
+      "id": "n113",
+      "name": "Claude Vision - HTR receta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Leés etiquetas de cajas/blisteres de medicamentos. Respondes EXCLUSIVAMENTE JSON: {\"droga\": string|null, \"marca\": string|null, \"mg\": string|null, \"cantidad_comprimidos\": string|null}.', messages: [ { role: 'user', content: [ { type: 'text', text: 'Extrae los datos de esta caja de medicamento.' }, { type: 'image', source: { type: 'base64', media_type: $json.mime_type, data: $json.image_base64 } } ] } ] }) }}"
+      },
+      "id": "n114",
+      "name": "Claude Vision - Leer medicamento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Placeholder: decodificar el codigo requiere una libreria de imagen (ej. jsQR / zxing)\n// que no viene incluida en el sandbox estandar de n8n. Dos opciones:\n//  1) Instalar un nodo comunitario de QR/Barcode y reemplazar este Code node.\n//  2) Delegar la lectura del codigo a un microservicio propio (HTTP Request) y\n//     dejar este nodo solo para combinar el resultado.\nconst item = $input.first().json;\nreturn [{ json: { ...item, codigo_detectado: null, nota: 'Pendiente: conectar libreria de QR/Barcode' } }];\n"
+      },
+      "id": "n115",
+      "name": "Decodificar QR/codigo de barras",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Extraes el texto relevante (numero de tramite, autorizacion, practica solicitada) de un documento medico con codigo QR o de barras. Respondes EXCLUSIVAMENTE JSON: {\"numero_autorizacion\": string|null, \"practica\": string|null}.', messages: [ { role: 'user', content: [ { type: 'text', text: 'Extrae el texto relevante de este documento.' }, { type: 'image', source: { type: 'base64', media_type: $json.mime_type, data: $json.image_base64 } } ] } ] }) }}"
+      },
+      "id": "n116",
+      "name": "Claude Vision - Leer texto adicional",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1700,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn [{ json: { ...$input.first().json, extraccion: {} } }];\n"
+      },
+      "id": "n117",
+      "name": "Sin extraccion especifica",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first().json;\nlet extraccion = {};\ntry {\n  const text = item.content?.[0]?.text;\n  if (text) {\n    const match = text.match(/\\{[\\s\\S]*\\}/);\n    extraccion = JSON.parse(match ? match[0] : text);\n  }\n} catch (e) {}\n\nconst base = $('Parsear clasificacion').first().json;\nreturn [{\n  json: {\n    telefono: base.telefono,\n    paciente: base.paciente,\n    tipo_documento: base.tipo_documento,\n    image_base64: base.image_base64,\n    mime_type: base.mime_type,\n    extraccion: Object.keys(extraccion).length ? extraccion : (item.extraccion || item.codigo_detectado ? { codigo: item.codigo_detectado } : {}),\n  }\n}];\n"
+      },
+      "id": "n118",
+      "name": "Armar JSON estandar de documento",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/storage/v1/object/documentos-pacientes/={{ 'pacientes/' + $json.telefono + '/documentos/' + $json.tipo_documento + '-' + Date.now() + '.jpg' }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/octet-stream"
+            }
+          ]
+        }
+      },
+      "id": "n119",
+      "name": "Guardar imagen en Storage (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2180,
+        0
+      ],
+      "notes": "Sube el binario recibido en el item (propiedad binary 'data'). Habilitar 'Send Binary Data' en el nodo tras importar."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/documentos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ paciente_id: $json.paciente.id, tipo_documento: $json.tipo_documento, datos_extraidos: $json.extraccion }]) }}"
+      },
+      "id": "n120",
+      "name": "Insertar documento (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.tipo_documento}}",
+              "rightValue": "derivacion",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n121",
+      "name": "Requiere turno? (derivacion)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "SET_AFTER_IMPORT",
+          "mode": "id",
+          "cachedResultName": "02 - Gestion de Turnos"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "n122",
+      "name": "Ejecutar Flujo 02 (sugerir turno)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2900,
+        -100
+      ],
+      "notes": "Despues de importar todos los workflows: abrir este nodo y elegir '02 - Gestion de Turnos' desde el dropdown de Workflow."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$('Parsear clasificacion').first().json.telefono}}, text: ={{ 'Guardé tu ' + $('Parsear clasificacion').first().json.tipo_documento.replace('_',' ') + ' en tu ficha. ¿Necesitás que te ayude con algo más sobre esto?' }} }) }}"
+      },
+      "id": "n123",
+      "name": "Confirmar archivo al paciente (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2900,
+        120
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    }
+  ],
+  "connections": {
+    "Entrada desde Router": {
+      "main": [
+        [
+          {
+            "node": "Descargar imagen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar imagen": {
+      "main": [
+        [
+          {
+            "node": "Convertir a base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convertir a base64": {
+      "main": [
+        [
+          {
+            "node": "Clasificar documento (Claude Vision)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar documento (Claude Vision)": {
+      "main": [
+        [
+          {
+            "node": "Parsear clasificacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear clasificacion": {
+      "main": [
+        [
+          {
+            "node": "Tipo de documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tipo de documento": {
+      "main": [
+        [
+          {
+            "node": "Claude Vision - HTR receta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claude Vision - Leer medicamento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Decodificar QR/codigo de barras",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sin extraccion especifica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decodificar QR/codigo de barras": {
+      "main": [
+        [
+          {
+            "node": "Claude Vision - Leer texto adicional",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Vision - HTR receta": {
+      "main": [
+        [
+          {
+            "node": "Armar JSON estandar de documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Vision - Leer medicamento": {
+      "main": [
+        [
+          {
+            "node": "Armar JSON estandar de documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Vision - Leer texto adicional": {
+      "main": [
+        [
+          {
+            "node": "Armar JSON estandar de documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sin extraccion especifica": {
+      "main": [
+        [
+          {
+            "node": "Armar JSON estandar de documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar JSON estandar de documento": {
+      "main": [
+        [
+          {
+            "node": "Guardar imagen en Storage (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar imagen en Storage (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Insertar documento (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar documento (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Requiere turno? (derivacion)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requiere turno? (derivacion)": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar Flujo 02 (sugerir turno)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirmar archivo al paciente (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ejecutar Flujo 02 (sugerir turno)": {
+      "main": [
+        [
+          {
+            "node": "Confirmar archivo al paciente (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

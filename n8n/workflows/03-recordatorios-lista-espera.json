@@ -1,0 +1,1120 @@
+{
+  "name": "03 - Recordatorios y Lista de Espera",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "n062",
+      "name": "Cada hora",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "RECORDATORIOS + LISTA DE ESPERA\n\nRama de arriba (Cron): manda recordatorios 48h/24h antes del turno.\nRama de abajo (Execute Workflow Trigger): atiende cancelaciones\n(intent=cancelar_turno desde el Router) y ofrece el hueco liberado\nal primero en lista_espera. Cuando el candidato responde, el Router\nvuelve a clasificar su intent como turno_nuevo y lo atiende el Flujo 02\n(estado_conversacion.esperando = 'oferta_lista_espera').",
+        "height": 220,
+        "width": 420
+      },
+      "id": "n063",
+      "name": "Nota 5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst now = new Date();\nconst iso = d => d.toISOString();\nconst w48s = new Date(now.getTime() + 47 * 3600 * 1000);\nconst w48e = new Date(now.getTime() + 49 * 3600 * 1000);\nconst w24s = new Date(now.getTime() + 23 * 3600 * 1000);\nconst w24e = new Date(now.getTime() + 25 * 3600 * 1000);\nreturn [{\n  json: {\n    filtro_48h: `(estado.eq.confirmado,recordatorio_48h_enviado.eq.false,fecha_hora.gte.${iso(w48s)},fecha_hora.lte.${iso(w48e)})`,\n    filtro_24h: `(estado.eq.confirmado,recordatorio_24h_enviado.eq.false,fecha_hora.gte.${iso(w24s)},fecha_hora.lte.${iso(w24e)})`,\n  }\n}];\n"
+      },
+      "id": "n064",
+      "name": "Calcular ventanas de recordatorio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/turnos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "and",
+              "value": "={{$json.filtro_48h}}"
+            },
+            {
+              "name": "select",
+              "value": "*,pacientes(id,telefono,nombre_completo)"
+            }
+          ]
+        }
+      },
+      "id": "n065",
+      "name": "Buscar turnos a 48h (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "n066",
+      "name": "Loop turnos 48h",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        740,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst t = $json;\nconst fecha = new Date(t.fecha_hora).toLocaleString('es-AR', { dateStyle: 'full', timeStyle: 'short' });\nreturn [{\n  json: {\n    telefono: t.pacientes.telefono,\n    turno_id: t.id,\n    mensaje: `Hola ${t.pacientes.nombre_completo || ''}! Te recordamos tu turno para el ${fecha}. Respondé CONFIRMO, CANCELAR o REPROGRAMAR.`,\n  }\n}];\n"
+      },
+      "id": "n067",
+      "name": "Armar mensaje recordatorio 48h",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: ={{$json.mensaje}} }) }}"
+      },
+      "id": "n068",
+      "name": "Enviar recordatorio 48h (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        -80
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/turnos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.turno_id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ recordatorio_48h_enviado: true }) }}"
+      },
+      "id": "n069",
+      "name": "Marcar recordatorio 48h enviado (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/turnos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "and",
+              "value": "={{$json.filtro_24h}}"
+            },
+            {
+              "name": "select",
+              "value": "*,pacientes(id,telefono,nombre_completo)"
+            }
+          ]
+        }
+      },
+      "id": "n070",
+      "name": "Buscar turnos a 24h (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "n071",
+      "name": "Loop turnos 24h",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        740,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst t = $json;\nconst fecha = new Date(t.fecha_hora).toLocaleString('es-AR', { dateStyle: 'full', timeStyle: 'short' });\nreturn [{\n  json: {\n    telefono: t.pacientes.telefono,\n    turno_id: t.id,\n    mensaje: `Hola ${t.pacientes.nombre_completo || ''}! Te recordamos tu turno para el ${fecha}. Respondé CONFIRMO, CANCELAR o REPROGRAMAR.`,\n  }\n}];\n"
+      },
+      "id": "n072",
+      "name": "Armar mensaje recordatorio 24h",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: ={{$json.mensaje}} }) }}"
+      },
+      "id": "n073",
+      "name": "Enviar recordatorio 24h (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        160
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/turnos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.turno_id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ recordatorio_24h_enviado: true }) }}"
+      },
+      "id": "n074",
+      "name": "Marcar recordatorio 24h enviado (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n075",
+      "name": "Entrada: cancelacion desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/turnos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "paciente_id",
+              "value": "=eq.{{$json.paciente.id}}"
+            },
+            {
+              "name": "estado",
+              "value": "eq.confirmado"
+            },
+            {
+              "name": "order",
+              "value": "fecha_hora.asc"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        }
+      },
+      "id": "n076",
+      "name": "Buscar turno del paciente (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $('Entrada: cancelacion desde Router').first().json;\nconst rows = $input.first().json;\nconst turno = Array.isArray(rows) && rows.length ? rows[0] : null;\nreturn [{ json: { ...ctx, turno } }];\n"
+      },
+      "id": "n077",
+      "name": "Extraer turno a cancelar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.turno}}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n078",
+      "name": "Tiene turno para cancelar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        740,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'No encontré ningún turno confirmado a tu nombre para cancelar.' }) }}"
+      },
+      "id": "n079",
+      "name": "Avisar que no tiene turnos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        600
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_CALENDAR_ID}}",
+          "mode": "id"
+        },
+        "operation": "delete",
+        "eventId": "={{$json.turno.google_event_id}}"
+      },
+      "id": "n080",
+      "name": "Eliminar evento del Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        980,
+        380
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Calendar - Consultorio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/turnos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.turno.id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ estado: 'cancelado' }) }}"
+      },
+      "id": "n081",
+      "name": "Marcar turno cancelado (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'Listo, cancelé tu turno. Avisame si querés reprogramar.' }) }}"
+      },
+      "id": "n082",
+      "name": "Confirmar cancelacion al paciente (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        380
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/lista_espera",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "estado",
+              "value": "eq.esperando"
+            },
+            {
+              "name": "profesional",
+              "value": "=eq.{{$('Extraer turno a cancelar').first().json.turno.profesional}}"
+            },
+            {
+              "name": "order",
+              "value": "created_at.asc"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            },
+            {
+              "name": "select",
+              "value": "*,pacientes(id,telefono)"
+            }
+          ]
+        }
+      },
+      "id": "n083",
+      "name": "Buscar candidato en lista de espera (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1700,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst cancelado = $('Extraer turno a cancelar').first().json.turno;\nconst rows = $input.first().json;\nconst candidato = Array.isArray(rows) && rows.length ? rows[0] : null;\nreturn [{ json: { turno_cancelado: cancelado, candidato } }];\n"
+      },
+      "id": "n084",
+      "name": "Extraer candidato lista espera",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.candidato}}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n085",
+      "name": "Hay alguien en lista de espera?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first().json;\nconst t = item.turno_cancelado;\nconst slot = { start: t.fecha_hora, end: new Date(new Date(t.fecha_hora).getTime() + (t.duracion_minutos || 20) * 60000).toISOString() };\nconst fecha = new Date(slot.start).toLocaleString('es-AR', { dateStyle: 'full', timeStyle: 'short' });\nreturn [{\n  json: {\n    telefono: item.candidato.pacientes.telefono,\n    paciente_id: item.candidato.pacientes.id,\n    lista_espera_id: item.candidato.id,\n    tipo_consulta: item.candidato.tipo_consulta,\n    profesional: item.candidato.profesional,\n    slot,\n    mensaje: `Se liberó un turno para el ${fecha}. ¿Lo querés? Respondé 1 para confirmarlo.`,\n  }\n}];\n"
+      },
+      "id": "n086",
+      "name": "Armar oferta de turno liberado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: ={{$json.mensaje}} }) }}"
+      },
+      "id": "n087",
+      "name": "Ofrecer turno liberado (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        300
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/lista_espera",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.lista_espera_id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ estado: 'ofrecido' }) }}"
+      },
+      "id": "n088",
+      "name": "Marcar lista_espera ofrecido (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pacientes",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{$json.paciente_id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ estado_conversacion: { esperando: 'oferta_lista_espera', opciones: [$json.slot], lista_espera_id: $json.lista_espera_id, tipo_consulta: $json.tipo_consulta, profesional: $json.profesional } }) }}"
+      },
+      "id": "n089",
+      "name": "Guardar estado_conversacion candidato (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2900,
+        380
+      ]
+    }
+  ],
+  "connections": {
+    "Calcular ventanas de recordatorio": {
+      "main": [
+        [
+          {
+            "node": "Buscar turnos a 48h (Supabase)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Buscar turnos a 24h (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar turnos a 48h (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Loop turnos 48h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop turnos 48h": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Armar mensaje recordatorio 48h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar mensaje recordatorio 48h": {
+      "main": [
+        [
+          {
+            "node": "Enviar recordatorio 48h (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar recordatorio 48h (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Marcar recordatorio 48h enviado (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar recordatorio 48h enviado (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Loop turnos 48h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar turnos a 24h (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Loop turnos 24h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop turnos 24h": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Armar mensaje recordatorio 24h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar mensaje recordatorio 24h": {
+      "main": [
+        [
+          {
+            "node": "Enviar recordatorio 24h (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar recordatorio 24h (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Marcar recordatorio 24h enviado (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar recordatorio 24h enviado (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Loop turnos 24h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrada: cancelacion desde Router": {
+      "main": [
+        [
+          {
+            "node": "Buscar turno del paciente (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar turno del paciente (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Extraer turno a cancelar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer turno a cancelar": {
+      "main": [
+        [
+          {
+            "node": "Tiene turno para cancelar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tiene turno para cancelar?": {
+      "main": [
+        [
+          {
+            "node": "Eliminar evento del Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Avisar que no tiene turnos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eliminar evento del Calendar": {
+      "main": [
+        [
+          {
+            "node": "Marcar turno cancelado (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar turno cancelado (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Confirmar cancelacion al paciente (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmar cancelacion al paciente (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Buscar candidato en lista de espera (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar candidato en lista de espera (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Extraer candidato lista espera",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer candidato lista espera": {
+      "main": [
+        [
+          {
+            "node": "Hay alguien en lista de espera?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay alguien en lista de espera?": {
+      "main": [
+        [
+          {
+            "node": "Armar oferta de turno liberado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar oferta de turno liberado": {
+      "main": [
+        [
+          {
+            "node": "Ofrecer turno liberado (WhatsApp)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Marcar lista_espera ofrecido (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ofrecer turno liberado (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Guardar estado_conversacion candidato (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar lista_espera ofrecido (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Guardar estado_conversacion candidato (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

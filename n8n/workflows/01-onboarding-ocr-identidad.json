@@ -1,0 +1,463 @@
+{
+  "name": "01 - Onboarding OCR Identidad",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "n028",
+      "name": "Entrada desde Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "ONBOARDING / OCR DE IDENTIDAD\n\nSe dispara cuando llega una foto de DNI o credencial PAMI\n(paciente nuevo, o paciente existente actualizando datos).\nCrea o actualiza la ficha del paciente sin tipeo manual.",
+        "height": 180,
+        "width": 380
+      },
+      "id": "n029",
+      "name": "Nota 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$json.media_url}}",
+        "options": {}
+      },
+      "id": "n030",
+      "name": "Descargar imagen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "notes": "Configurar 'Response Format' = File/Binary en el nodo tras importar, para que la imagen quede en $binary.data."
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first();\nconst binary = item.binary?.data;\nif (!binary) {\n  throw new Error('No se recibio imagen binaria. Revisar el nodo Descargar imagen (Response Format = File).');\n}\nreturn [{\n  json: {\n    ...item.json,\n    image_base64: binary.data,\n    mime_type: binary.mimeType || 'image/jpeg',\n  }\n}];\n"
+      },
+      "id": "n031",
+      "name": "Convertir imagen a base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.ANTHROPIC_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: 1024, system: 'Sos un asistente que digitaliza documentos de identidad para un consultorio medico de PAMI en Argentina. Respondes EXCLUSIVAMENTE con un JSON valido, sin texto adicional ni markdown, con esta forma exacta: {\"tipo_documento\": \"dni_frente|dni_dorso|credencial_pami|otro\", \"nombre_completo\": string|null, \"dni\": string|null, \"fecha_nacimiento\": \"YYYY-MM-DD\"|null, \"nro_afiliado_pami\": string|null}. El numero de afiliado de PAMI generalmente termina en 2 digitos que indican el tipo de beneficiario, incluilos siempre. Si un dato no se lee con claridad, poné null en ese campo, no inventes.', messages: [ { role: 'user', content: [ { type: 'text', text: 'Extrae los datos de esta imagen de documento.' }, { type: 'image', source: { type: 'base64', media_type: $json.mime_type, data: $json.image_base64 } } ] } ] }) }}"
+      },
+      "id": "n032",
+      "name": "Claude Vision - Leer documento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst prev = $('Convertir imagen a base64').first().json;\nconst resp = $input.first().json;\nlet datos = {};\ntry {\n  const text = resp.content?.[0]?.text || '{}';\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  datos = JSON.parse(match ? match[0] : text);\n} catch (e) {\n  datos = {};\n}\n\nconst dniValido = datos.dni && /^\\d{7,8}$/.test(String(datos.dni).replace(/\\D/g, ''));\nconst faltanDatos = !datos.nombre_completo || !dniValido;\n\nreturn [{\n  json: {\n    ...prev,\n    telefono: prev.telefono,\n    datos_extraidos: datos,\n    dni_normalizado: datos.dni ? String(datos.dni).replace(/\\D/g, '') : null,\n    faltan_datos: faltanDatos,\n  }\n}];\n"
+      },
+      "id": "n033",
+      "name": "Parsear y validar datos OCR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.faltan_datos}}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n034",
+      "name": "Datos completos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$json.telefono}}, text: 'No pude leer bien la foto 😕. ¿Podés sacarla de nuevo con buena luz, apoyada y sin reflejos, que se vea el DNI o la credencial de PAMI completa?' }) }}"
+      },
+      "id": "n035",
+      "name": "Pedir reenvio de foto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        -140
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/storage/v1/object/documentos-pacientes/={{ 'pacientes/' + $json.telefono + '/identidad/' + Date.now() + '.jpg' }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/octet-stream"
+            }
+          ]
+        }
+      },
+      "id": "n036",
+      "name": "Guardar imagen en Storage (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        100
+      ],
+      "notes": "Sube el binario recibido en el item (propiedad binary 'data'). Habilitar 'Send Binary Data' en el nodo tras importar."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/pacientes",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "telefono"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ telefono: $json.telefono, nombre_completo: $json.datos_extraidos.nombre_completo, dni: $json.dni_normalizado, fecha_nacimiento: $json.datos_extraidos.fecha_nacimiento, nro_afiliado_pami: $json.datos_extraidos.nro_afiliado_pami, onboarding_completo: true }]) }}"
+      },
+      "id": "n037",
+      "name": "Upsert paciente (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1700,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ocr = $('Parsear y validar datos OCR').first().json;\nconst upsert = $input.first().json;\nconst paciente = Array.isArray(upsert) ? upsert[0] : upsert;\nreturn [{\n  json: {\n    paciente_id: paciente.id,\n    telefono: ocr.telefono,\n    tipo_documento: ocr.datos_extraidos.tipo_documento || 'identidad',\n    datos_extraidos: ocr.datos_extraidos,\n  }\n}];\n"
+      },
+      "id": "n038",
+      "name": "Preparar registro de documento",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/documentos",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ paciente_id: $json.paciente_id, tipo_documento: 'identidad', datos_extraidos: $json.datos_extraidos }]) }}"
+      },
+      "id": "n039",
+      "name": "Registrar documento (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2180,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE}}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: ={{$('Preparar registro de documento').first().json.telefono}}, text: =`Te registré con estos datos:\\n\\n👤 ${$('Preparar registro de documento').first().json.datos_extraidos.nombre_completo}\\n🪪 DNI: ${$('Parsear y validar datos OCR').first().json.dni_normalizado}\\n🎂 Nacimiento: ${$('Preparar registro de documento').first().json.datos_extraidos.fecha_nacimiento || 'no leido'}\\n🩺 Afiliado PAMI: ${$('Preparar registro de documento').first().json.datos_extraidos.nro_afiliado_pami || 'no leido'}\\n\\n¿Está todo correcto? Respondé SI o CORREGIR.` }) }}"
+      },
+      "id": "n040",
+      "name": "Confirmar datos al paciente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        100
+      ],
+      "notes": "Ajustar el nombre de los campos del body a la version exacta de tu Evolution API (algunas usan textMessage.text en vez de text)."
+    }
+  ],
+  "connections": {
+    "Entrada desde Router": {
+      "main": [
+        [
+          {
+            "node": "Descargar imagen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar imagen": {
+      "main": [
+        [
+          {
+            "node": "Convertir imagen a base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convertir imagen a base64": {
+      "main": [
+        [
+          {
+            "node": "Claude Vision - Leer documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Vision - Leer documento": {
+      "main": [
+        [
+          {
+            "node": "Parsear y validar datos OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear y validar datos OCR": {
+      "main": [
+        [
+          {
+            "node": "Datos completos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos completos?": {
+      "main": [
+        [
+          {
+            "node": "Guardar imagen en Storage (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir reenvio de foto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar imagen en Storage (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Upsert paciente (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert paciente (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Preparar registro de documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar registro de documento": {
+      "main": [
+        [
+          {
+            "node": "Registrar documento (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar documento (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Confirmar datos al paciente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
